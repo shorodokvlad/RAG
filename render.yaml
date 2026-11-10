@@ -1,0 +1,27 @@
+# Render Blueprint for the SHV Assistant AI service.
+# In Render: New + -> Blueprint -> select this repo. Secret values are prompted in the
+# dashboard (sync: false), never stored here.
+services:
+  - type: web
+    name: shv-ai
+    runtime: docker
+    plan: free
+    # Same region as Supabase and the Spring backend (Frankfurt).
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      # Supabase "Session pooler" URI: postgresql://postgres.<ref>:<password>@aws-0-eu-central-1.pooler.supabase.com:5432/postgres
+      - key: DATABASE_URL
+        sync: false
+      # Must equal AI_SERVICE_TOKEN on the Spring service. Generate with: openssl rand -hex 32
+      - key: SERVICE_TOKEN
+        sync: false
+      # Public URL of the Spring backend, e.g. https://spring-ecommerce-backend.onrender.com
+      - key: SPRING_BASE_URL
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false

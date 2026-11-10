@@ -1,0 +1,28 @@
+# Optional local stack: a throwaway Postgres with pgvector, so you can try the
+# indexer without touching Supabase. Spring still runs against its own database.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: shv
+      POSTGRES_PASSWORD: shv
+      POSTGRES_DB: shv_ai
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  ai:
+    build: .
+    profiles: ["full"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://shv:shv@db:5432/shv_ai
+      SPRING_BASE_URL: http://host.docker.internal:2424
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+volumes:
+  pgdata:

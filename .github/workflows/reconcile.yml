@@ -1,0 +1,27 @@
+# Nightly full re-index (PLAN.md §1.5). Free, and it also wakes the Render service.
+# Repo secrets needed: AI_SERVICE_URL (e.g. https://shv-ai.onrender.com) and AI_SERVICE_TOKEN.
+name: Nightly reconcile
+
+on:
+  schedule:
+    - cron: "15 2 * * *" # 02:15 UTC
+  workflow_dispatch:
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the service
+        run: curl --fail --silent --retry 5 --retry-delay 15 --retry-all-errors --max-time 120 "$AI_SERVICE_URL/health"
+        env:
+          AI_SERVICE_URL: ${{ secrets.AI_SERVICE_URL }}
+      - name: Start reconcile
+        run: |
+          status=$(curl --silent --output /dev/stderr --write-out '%{http_code}' --max-time 60 \
+            -X POST -H "X-Service-Token: $AI_SERVICE_TOKEN" "$AI_SERVICE_URL/index/reconcile")
+          echo "HTTP $status"
+          # 202 = started, 409 = one is already running
+          [ "$status" = "202" ] || [ "$status" = "409" ]
+        env:
+          AI_SERVICE_URL: ${{ secrets.AI_SERVICE_URL }}
+          AI_SERVICE_TOKEN: ${{ secrets.AI_SERVICE_TOKEN }}
