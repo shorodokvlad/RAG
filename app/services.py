@@ -4,6 +4,8 @@ from datetime import timedelta
 import asyncpg
 from fastapi import HTTPException, Request, status
 
+from app.agent.loop import ChatAgent
+from app.agent.memory import ChatMemory
 from app.clients.embeddings import Embedder
 from app.clients.llm import LLM
 from app.clients.spring import SpringClient
@@ -46,6 +48,10 @@ class Services:
         )
         if self.embedder is not None:
             self.asker = AskService(self.pool, self.llm, self.embedder)
+
+    @property
+    def chat_agent(self) -> ChatAgent | None:
+        return ChatAgent(self.llm, ChatMemory(self.pool), self) if self.llm is not None else None
 
     @property
     def searcher(self) -> SearchService | None:
@@ -98,3 +104,10 @@ def require_searcher(services: Services) -> SearchService:
         key = missing_embedder_key(services.settings) if services.settings else "the embedding API key"
         raise _unavailable(f"Search is disabled: {key} is not set")
     return searcher
+
+
+def require_chat_agent(services: Services) -> ChatAgent:
+    agent = services.chat_agent
+    if agent is None:
+        raise _unavailable("The chat assistant is disabled: no LLM API key is set")
+    return agent

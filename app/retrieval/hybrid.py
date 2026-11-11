@@ -186,6 +186,23 @@ class HybridSearch:
             )
         return fuse([rows], limit)
 
+    async def review_ids(self, product_id: int, aspect: str, limit: int = 6) -> list[int]:
+        """Ids of this product's reviews closest to an aspect ("battery", "comfort"), best first."""
+        [vector] = await self._embedder.embed([aspect], "query")
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT source_id FROM ai.chunks
+                WHERE product_id = $1 AND source_type = 'review'
+                ORDER BY embedding <=> $2::vector
+                LIMIT $3
+                """,
+                product_id,
+                to_pgvector(vector),
+                limit * 2,  # long reviews have several chunks
+            )
+        return list(dict.fromkeys(r["source_id"] for r in rows))[:limit]
+
     async def search_kb(self, query: str, limit: int = 4, candidates: int = 20) -> list[KbPassage]:
         """Store policies and FAQ (returns, delivery, payment, ...)."""
         [vector] = await self._embedder.embed([query], "query")
