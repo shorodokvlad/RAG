@@ -14,6 +14,7 @@ RUN mkdir app && touch app/__init__.py && pip install . && rm -rf app
 COPY app ./app
 COPY alembic.ini ./
 COPY alembic ./alembic
+COPY kb ./kb
 COPY scripts/start.sh ./scripts/start.sh
 RUN pip install --no-deps . \
     && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin shv

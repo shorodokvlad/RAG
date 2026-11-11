@@ -1,11 +1,13 @@
 """Push-based indexing: Spring calls these after a product or review commit (PLAN.md §1.5)."""
 
 import logging
+from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
-from app.indexing.indexer import delete_product_data, reindex_all
+from app.indexing.indexer import Indexer, KbStats, delete_product_data, reindex_all
+from app.indexing.kb import load_documents
 from app.models import Product, Review
 from app.security import require_service_token
 from app.services import Services, get_services, require_indexer
@@ -49,9 +51,22 @@ async def _reindex_product_task(services: Services, product_id: int) -> None:
         log.exception("background re-index of product %s failed", product_id)
 
 
+async def sync_kb(indexer: Indexer) -> KbStats | None:
+    """Index kb/*.md. Skipped (not wiped) when no documents are found, e.g. a missing folder."""
+    documents = load_documents()
+    if not documents:
+        log.warning("no knowledge base documents found; skipping the KB sync")
+        return None
+    stats = await indexer.index_kb(documents)
+    log.info("knowledge base synced: %s", stats)
+    return stats
+
+
 async def _reindex_all_task(services: Services) -> None:
     try:
-        await reindex_all(services.spring, require_indexer(services))
+        indexer = require_indexer(services)
+        await sync_kb(indexer)
+        await reindex_all(services.spring, indexer)
     except Exception:
         log.exception("reconcile failed")
     finally:
@@ -84,3 +99,12 @@ async def reconcile(services: ServicesDep, background: BackgroundTasks) -> dict:
     services.reconcile_running = True
     background.add_task(_reindex_all_task, services)
     return {"status": "accepted"}
+
+
+@router.post("/kb")
+async def index_kb(services: ServicesDep) -> dict:
+    """Re-read kb/*.md now (runs at startup and on reconcile too). Only edited sections are embedded."""
+    stats = await sync_kb(require_indexer(services))
+    if stats is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No knowledge base documents found")
+    return {"status": "synced"} | asdict(stats)

@@ -6,6 +6,7 @@ score sums 1 / (k + rank) of its best chunk in each list, so a product that both
 like wins over one that only one list likes.
 """
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -83,6 +84,43 @@ def fuse(ranked_lists: Sequence[Sequence[Mapping]], limit: int, k: int = RRF_K) 
     ]
 
 
+@dataclass(frozen=True)
+class KbPassage:
+    id: int  # ai.chunks id
+    title: str  # "Returns and cancellations: Can I return a product?"
+    slug: str
+    content: str
+    score: float
+
+
+def fuse_passages(ranked_lists: Sequence[Sequence[Mapping]], limit: int, k: int = RRF_K) -> list[KbPassage]:
+    """Reciprocal Rank Fusion over knowledge-base chunks (each chunk is its own result)."""
+    scores: dict[int, float] = {}
+    rows: dict[int, Mapping] = {}
+    for ranked in ranked_lists:
+        for rank, row in enumerate(ranked, start=1):
+            scores[row["id"]] = scores.get(row["id"], 0.0) + 1.0 / (k + rank)
+            rows.setdefault(row["id"], row)
+    ordered = sorted(scores, key=lambda cid: (-scores[cid], cid))[:limit]
+    passages = []
+    for cid in ordered:
+        content = rows[cid]["content"]
+        title, _, body = content.partition("\n")
+        metadata = rows[cid]["metadata"]
+        if isinstance(metadata, str):  # asyncpg returns jsonb as text
+            metadata = json.loads(metadata)
+        passages.append(
+            KbPassage(
+                id=cid,
+                title=title,
+                slug=(metadata or {}).get("slug", ""),
+                content=body.strip() or content,
+                score=round(scores[cid], 6),
+            )
+        )
+    return passages
+
+
 class HybridSearch:
     def __init__(self, pool: asyncpg.Pool, embedder: Embedder):
         self._pool = pool
@@ -147,3 +185,32 @@ class HybridSearch:
                 limit,
             )
         return fuse([rows], limit)
+
+    async def search_kb(self, query: str, limit: int = 4, candidates: int = 20) -> list[KbPassage]:
+        """Store policies and FAQ (returns, delivery, payment, ...)."""
+        [vector] = await self._embedder.embed([query], "query")
+        keywords = keyword_query(query)
+        async with self._pool.acquire() as conn:
+            by_vector = await conn.fetch(
+                """
+                SELECT id, content, metadata FROM ai.chunks
+                WHERE source_type = 'faq'
+                ORDER BY embedding <=> $1::vector
+                LIMIT $2
+                """,
+                to_pgvector(vector),
+                candidates,
+            )
+            by_keyword = []
+            if keywords:
+                by_keyword = await conn.fetch(
+                    """
+                    SELECT id, content, metadata FROM ai.chunks
+                    WHERE source_type = 'faq' AND tsv @@ to_tsquery('simple', $1)
+                    ORDER BY ts_rank(tsv, to_tsquery('simple', $1)) DESC
+                    LIMIT $2
+                    """,
+                    keywords,
+                    candidates,
+                )
+        return fuse_passages([by_vector, by_keyword], limit)

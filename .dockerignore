@@ -11,3 +11,4 @@ tests
 evals
 *.md
 !README.md
+!kb/*.md

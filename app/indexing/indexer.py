@@ -11,6 +11,7 @@ from app.clients.embeddings import Embedder
 from app.clients.spring import SpringClient
 from app.db import to_pgvector
 from app.indexing.chunkers import Chunk, build_product_chunks
+from app.indexing.kb import KbDocument, build_faq_chunks
 from app.models import Product, Review
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,16 @@ def plan_changes(
 
 
 @dataclass
+class KbStats:
+    documents: int
+    documents_removed: int
+    chunks: int
+    embedded: int
+    touched: int
+    deleted: int
+
+
+@dataclass
 class IndexStats:
     product_id: int
     chunks: int
@@ -72,6 +83,24 @@ _EXISTING_SQL = """
 SELECT id, source_type, source_id, chunk_index, content_hash
 FROM ai.chunks
 WHERE product_id = $1
+"""
+
+_EXISTING_FAQ_SQL = """
+SELECT id, source_type, source_id, chunk_index, content_hash
+FROM ai.chunks
+WHERE source_type = 'faq'
+"""
+
+_KB_UPSERT_SQL = """
+INSERT INTO ai.kb_documents (slug, title, body)
+VALUES ($1, $2, $3)
+ON CONFLICT (slug) DO UPDATE SET
+    title = EXCLUDED.title,
+    body = EXCLUDED.body,
+    updated_at = CASE WHEN ai.kb_documents.body IS DISTINCT FROM EXCLUDED.body
+                        OR ai.kb_documents.title IS DISTINCT FROM EXCLUDED.title
+                      THEN now() ELSE ai.kb_documents.updated_at END
+RETURNING id
 """
 
 _UPSERT_SQL = """
@@ -103,9 +132,30 @@ class Indexer:
 
     async def index_product(self, product: Product, reviews: Sequence[Review]) -> IndexStats:
         chunks = build_product_chunks(product, reviews)
-
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(_EXISTING_SQL, product.id)
+        embedded, touched, deleted = await self._sync(rows, chunks)
+        return IndexStats(product.id, len(chunks), embedded, touched, deleted)
+
+    async def index_kb(self, documents: Sequence[KbDocument]) -> KbStats:
+        """Sync the knowledge base: upsert documents, re-embed changed sections, drop removed ones."""
+        async with self._pool.acquire() as conn, conn.transaction():
+            ids: dict[str, int] = {}
+            for doc in documents:
+                ids[doc.slug] = await conn.fetchval(_KB_UPSERT_SQL, doc.slug, doc.title, doc.body)
+            removed = await conn.execute(
+                "DELETE FROM ai.kb_documents WHERE NOT (slug = ANY($1::text[]))", list(ids)
+            )
+            rows = await conn.fetch(_EXISTING_FAQ_SQL)
+        chunks = [chunk for doc in documents for chunk in build_faq_chunks(ids[doc.slug], doc)]
+        embedded, touched, deleted = await self._sync(rows, chunks)
+        return KbStats(len(documents), int(removed.split()[-1]), len(chunks), embedded, touched, deleted)
+
+    async def _sync(self, rows: Iterable[asyncpg.Record], chunks: Sequence[Chunk]) -> tuple[int, int, int]:
+        """Make the stored chunks equal `chunks`; embeds only new or changed content.
+
+        Returns (embedded, touched, deleted) counts.
+        """
         existing = [
             ExistingChunk(r["id"], (r["source_type"], r["source_id"], r["chunk_index"]), r["content_hash"])
             for r in rows
@@ -157,9 +207,7 @@ class Indexer:
             if plan.to_delete:
                 await conn.execute("DELETE FROM ai.chunks WHERE id = ANY($1::bigint[])", plan.to_delete)
 
-        return IndexStats(
-            product.id, len(chunks), len(plan.to_embed), len(plan.to_touch), len(plan.to_delete)
-        )
+        return len(plan.to_embed), len(plan.to_touch), len(plan.to_delete)
 
     async def delete_product(self, product_id: int) -> int:
         return await delete_product_data(self._pool, product_id)
