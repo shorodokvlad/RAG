@@ -11,8 +11,10 @@ from app.config import Settings
 from app.features.ask import AskService
 from app.features.overview import OverviewService
 from app.features.review_summary import ReviewSummaryService
+from app.features.search import SearchService
 from app.indexing.indexer import Indexer
 from app.providers import missing_embedder_key
+from app.retrieval.hybrid import HybridSearch
 
 
 @dataclass
@@ -44,6 +46,12 @@ class Services:
         )
         if self.embedder is not None:
             self.asker = AskService(self.pool, self.llm, self.embedder)
+
+    @property
+    def searcher(self) -> SearchService | None:
+        if self.embedder is None:
+            return None
+        return SearchService(HybridSearch(self.pool, self.embedder), self.spring)
 
     @property
     def indexer(self) -> Indexer | None:
@@ -82,3 +90,11 @@ def require_asker(services: Services) -> AskService:
     if services.asker is None:
         raise _unavailable("Product Q&A is disabled: it needs both the LLM and embedding keys")
     return services.asker
+
+
+def require_searcher(services: Services) -> SearchService:
+    searcher = services.searcher
+    if searcher is None:
+        key = missing_embedder_key(services.settings) if services.settings else "the embedding API key"
+        raise _unavailable(f"Search is disabled: {key} is not set")
+    return searcher

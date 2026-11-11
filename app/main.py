@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health, index, products
+from app.api import health, index, products, search
 from app.clients.spring import SpringClient
 from app.config import get_settings
 from app.db import create_pool
@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(index.router)
     app.include_router(products.router)
+    app.include_router(search.router)
     return app
 
 
