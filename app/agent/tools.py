@@ -99,12 +99,20 @@ def _result_tag(tool: str, body: str) -> str:
     return f'<tool_result tool="{tool}">\n{body}\n</tool_result>'
 
 
+def euros(value: Decimal | None) -> str:
+    """€899, €899.50: how prices appear on the site (no "€899.0")."""
+    if value is None:
+        return "—"
+    amount = Decimal(value).quantize(Decimal("0.01"))
+    return f"€{amount:.0f}" if amount == amount.to_integral_value() else f"€{amount:.2f}"
+
+
 def _card(result: ProductResult) -> dict:
     return result.model_dump(mode="json")
 
 
 def _product_line(r: ProductResult) -> str:
-    price = f"€{r.price}" if r.price is not None else "price unknown"
+    price = euros(r.price) if r.price is not None else "price unknown"
     stock = {True: "in stock", False: "out of stock", None: "stock unknown"}[r.in_stock]
     rating = f", rated {r.average_rating}/5 ({r.review_count} reviews)" if r.review_count else ""
     category = f" [{r.category_name}]" if r.category_name else ""
@@ -115,7 +123,7 @@ def _product_line(r: ProductResult) -> str:
 def _variant_lines(product: Product) -> list[str]:
     lines = []
     for v in product.variants[:20]:
-        price = f"€{v.price}" if v.price is not None else "base price"
+        price = euros(v.price) if v.price is not None else "base price"
         stock = (
             "" if v.stock_quantity is None else (", in stock" if v.stock_quantity > 0 else ", out of stock")
         )
@@ -241,7 +249,7 @@ def comparison_table(products: list[Product]) -> dict:
 
     results = [to_result(p) for p in products]
     rows = [
-        {"label": "Price", "values": [f"€{r.price}" if r.price is not None else "—" for r in results]},
+        {"label": "Price", "values": [euros(r.price) for r in results]},
         {
             "label": "Rating",
             "values": [
@@ -326,7 +334,7 @@ async def suggest_add_to_cart(ctx: ToolContext, args: AddToCartArgs) -> ToolResu
     return ToolResult(
         _result_tag(
             "suggest_add_to_cart",
-            f"An 'Add to cart' button for {escape(label)} at €{price} is shown. "
+            f"An 'Add to cart' button for {escape(label)} at {euros(price)} is shown. "
             "The shopper must press it; nothing was added yet.",
         ),
         [Event("action", action)],

@@ -212,7 +212,7 @@ async def test_search_products_sends_cards_and_lists_them_for_the_model():
     assert result.product_ids == [1]
     [event] = result.events
     assert event.name == "products" and event.data["items"][0]["price"] == "900"
-    assert "#1 Phone A" in result.text and "from €900" in result.text and "matched:" in result.text
+    assert "#1 Phone A" in result.text and "from €900," in result.text and "matched:" in result.text
 
 
 async def test_add_to_cart_needs_an_in_stock_option():
@@ -483,3 +483,9 @@ async def test_agent_shows_each_product_card_once_per_answer():
 
     cards = [[c["id"] for c in e.data["items"]] for e in events if e.name == "products"]
     assert cards == [[1], [2]]
+
+
+def test_euros_formats_like_the_storefront():
+    assert agent_tools.euros(Decimal("899.0")) == "€899"
+    assert agent_tools.euros(Decimal("899.5")) == "€899.50"
+    assert agent_tools.euros(None) == "—"
