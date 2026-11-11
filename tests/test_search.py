@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.api import search as search_api
 from app.features.search import SearchFilters, SearchService, lowest_price, stock_state
 from app.models import Variant
-from app.retrieval.hybrid import ProductHit, fuse, keyword_query
+from app.retrieval.hybrid import ProductHit, fuse, keyword_query, relevant
 from app.services import get_services
 from tests.factories import make_product
 
@@ -58,6 +58,37 @@ def test_fuse_counts_each_product_once_per_list_and_skips_missing_ids():
     ]
     # Ranks are chunk positions: product 2 is the 4th row, so it scores 1 / (60 + 4).
     assert hits[1].score == round(1 / 64, 6)
+
+
+def test_fuse_keeps_each_products_best_similarity():
+    by_vector = [
+        {**row(1), "similarity": 0.60},
+        {**row(2), "similarity": 0.55},
+        {**row(1), "similarity": 0.50},
+    ]
+    by_keyword = [{**row(2), "similarity": 0.66}]
+
+    hits = {h.product_id: h.similarity for h in fuse([by_vector, by_keyword], limit=10)}
+
+    assert hits == {1: 0.60, 2: 0.66}
+
+
+def test_relevant_drops_products_far_below_the_best_match():
+    # The live "smartwatch for running" case: two watches, then unrelated products.
+    sims = {11: 0.654, 12: 0.644, 10: 0.557, 2: 0.537}
+    hits = [ProductHit(pid, 0.1, "", "review", sim) for pid, sim in sims.items()]
+
+    assert [h.product_id for h in relevant(hits)] == [11, 12]
+    assert [h.product_id for h in relevant(hits, margin=0.2)] == [11, 12, 10, 2]
+
+
+def test_relevant_without_similarities_keeps_everything():
+    hits = [hit_without_sim(1), hit_without_sim(2)]
+    assert relevant(hits) == hits
+
+
+def hit_without_sim(pid):
+    return ProductHit(pid, 0.1, "", "product_card")
 
 
 def test_fuse_limit():

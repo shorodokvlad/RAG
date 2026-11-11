@@ -18,6 +18,12 @@ from app.db import to_pgvector
 
 RRF_K = 60
 CANDIDATES = 40
+# Fusion only orders results; it never says "this isn't relevant", so a small catalog always
+# filled every slot (a running-watch question also showed AirPods and a MacBook). Products
+# whose best chunk is much less similar to the query than the best product's are dropped.
+# Measured on the live catalog (gemini-embedding-001): relevant products sit within ~0.05 of
+# the top similarity, unrelated ones ~0.08-0.1 below it.
+RELEVANCE_MARGIN = 0.05
 PRODUCT_SOURCE_TYPES = ("product_card", "product_spec", "product_desc", "review")
 # Keyword search ignores filler words so "a phone for photos" matches on phone/photos.
 _STOPWORD_TEXT = (
@@ -37,6 +43,8 @@ class ProductHit:
     # Best-matching text for this product, used to explain why it matched.
     snippet: str
     source_type: str
+    # Cosine similarity of the product's closest chunk to the query (None if unknown).
+    similarity: float | None = None
 
 
 def keyword_query(text: str) -> str | None:
@@ -62,11 +70,17 @@ def fuse(ranked_lists: Sequence[Sequence[Mapping]], limit: int, k: int = RRF_K) 
     """
     scores: dict[int, float] = {}
     best: dict[int, tuple[int, Mapping]] = {}
+    similarity: dict[int, float] = {}
     for rows in ranked_lists:
         seen: set[int] = set()
         for rank, row in enumerate(rows, start=1):
             product_id = row["product_id"]
-            if product_id is None or product_id in seen:
+            if product_id is None:
+                continue
+            value = row.get("similarity")
+            if value is not None:
+                similarity[product_id] = max(similarity.get(product_id, -1.0), float(value))
+            if product_id in seen:
                 continue
             seen.add(product_id)
             scores[product_id] = scores.get(product_id, 0.0) + 1.0 / (k + rank)
@@ -79,9 +93,19 @@ def fuse(ranked_lists: Sequence[Sequence[Mapping]], limit: int, k: int = RRF_K) 
             score=round(scores[pid], 6),
             snippet=best[pid][1]["content"],
             source_type=best[pid][1]["source_type"],
+            similarity=round(similarity[pid], 4) if pid in similarity else None,
         )
         for pid in ordered[:limit]
     ]
+
+
+def relevant(hits: Sequence[ProductHit], margin: float = RELEVANCE_MARGIN) -> list[ProductHit]:
+    """Keep the hits close enough to the best match; order is unchanged."""
+    known = [h.similarity for h in hits if h.similarity is not None]
+    if not known:
+        return list(hits)
+    floor = max(known) - margin
+    return [h for h in hits if h.similarity is not None and h.similarity >= floor]
 
 
 @dataclass(frozen=True)
@@ -144,7 +168,7 @@ class HybridSearch:
         async with self._pool.acquire() as conn:
             by_vector = await conn.fetch(
                 f"""
-                SELECT product_id, source_type, content
+                SELECT product_id, source_type, content, 1 - (embedding <=> $5::vector) AS similarity
                 FROM ai.chunks
                 WHERE {filters}
                 ORDER BY embedding <=> $5::vector
@@ -157,7 +181,7 @@ class HybridSearch:
             if keywords:
                 by_keyword = await conn.fetch(
                     f"""
-                    SELECT product_id, source_type, content
+                    SELECT product_id, source_type, content, 1 - (embedding <=> $6::vector) AS similarity
                     FROM ai.chunks
                     WHERE {filters} AND tsv @@ to_tsquery('simple', $5)
                     ORDER BY ts_rank(tsv, to_tsquery('simple', $5)) DESC
@@ -165,8 +189,10 @@ class HybridSearch:
                     """,
                     *common,
                     keywords,
+                    to_pgvector(vector),
                 )
-        return fuse([by_vector, by_keyword], limit)
+        hits = fuse([by_vector, by_keyword], limit=len(by_vector) + len(by_keyword))
+        return relevant(hits)[:limit]
 
     async def similar(self, product_id: int, limit: int = 6) -> list[ProductHit]:
         """Nearest products to this product's card (same embedding space as search)."""
