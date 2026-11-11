@@ -50,10 +50,13 @@ def _parse_json(text: str) -> list[SpecSection] | None:
     for raw in parsed:
         if not isinstance(raw, dict):
             continue
+        # Both {items: [{label, value}]} (admin SpecBuilder) and {specs: [{name, value}]} (imported data)
         items = tuple(
-            SpecItem(_clean(item.get("label")), _clean(item.get("value")))
-            for item in raw.get("items") or []
-            if isinstance(item, dict) and _clean(item.get("label")) and _clean(item.get("value"))
+            SpecItem(_clean(item.get("label") or item.get("name")), _clean(item.get("value")))
+            for item in raw.get("items") or raw.get("specs") or []
+            if isinstance(item, dict)
+            and _clean(item.get("label") or item.get("name"))
+            and _clean(item.get("value"))
         )
         if items:
             sections.append(SpecSection(_clean(raw.get("title")) or "SPECIFICATIONS", items))

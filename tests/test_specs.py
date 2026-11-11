@@ -9,6 +9,11 @@ def test_json_specs_drop_empty_items_and_sections():
     assert sections[0].items == (SpecItem("Operating System", "iOS"), SpecItem("Connectivity", "5G"))
 
 
+def test_json_specs_with_name_value_shape():
+    text = '[{"title": "Display", "specs": [{"name": "Screen Size", "value": "6.7-inch"}]}]'
+    assert parse_specifications(text)[0].items == (SpecItem("Screen Size", "6.7-inch"),)
+
+
 def test_legacy_text_with_headers_tabs_and_colons():
     text = "Specificații\nGeneral\nBrand: Apple\nModel\tiPhone 16\n\nDisplay\nScreen Size: 6.1 inch"
 

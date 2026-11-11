@@ -11,7 +11,13 @@ jobs:
   reconcile:
     runs-on: ubuntu-latest
     steps:
-      - name: Wake the service
+      # Render doesn't wake a sleeping free service for calls from another Render service,
+      # so wake Spring from here too: shv-ai calls it for every product during the reconcile.
+      - name: Wake the Spring backend
+        run: curl --silent --output /dev/null --retry 5 --retry-delay 15 --retry-all-errors --max-time 150 "$SPRING_BASE_URL/auth/health" || true
+        env:
+          SPRING_BASE_URL: ${{ vars.SPRING_BASE_URL || 'https://spring-ecommerce-app.onrender.com' }}
+      - name: Wake the AI service
         run: curl --fail --silent --retry 5 --retry-delay 15 --retry-all-errors --max-time 120 "$AI_SERVICE_URL/health"
         env:
           AI_SERVICE_URL: ${{ secrets.AI_SERVICE_URL }}
