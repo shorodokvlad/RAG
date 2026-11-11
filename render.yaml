@@ -23,5 +23,8 @@ services:
       # Public URL of the Spring backend, e.g. https://spring-ecommerce-backend.onrender.com
       - key: SPRING_BASE_URL
         sync: false
-      - key: VOYAGE_API_KEY
+      # Free Google AI Studio key: embeddings + LLM (https://aistudio.google.com/apikey)
+      - key: GEMINI_API_KEY
         sync: false
+      - key: LLM_MODEL
+        value: gemini-3.5-flash-lite

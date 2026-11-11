@@ -3,11 +3,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health, index
-from app.clients.embeddings import VoyageEmbedder
+from app.api import health, index, products
 from app.clients.spring import SpringClient
 from app.config import get_settings
 from app.db import create_pool
+from app.providers import build_embedder, build_llm, missing_embedder_key
 from app.services import Services
 
 log = logging.getLogger("shv-ai")
@@ -22,31 +22,30 @@ async def lifespan(app: FastAPI):
     spring = SpringClient(
         settings.spring_base_url, settings.service_token.get_secret_value(), settings.spring_timeout_seconds
     )
-    embedder = None
-    if settings.voyage_api_key is not None:
-        embedder = VoyageEmbedder(
-            settings.voyage_api_key.get_secret_value(),
-            settings.embedding_model,
-            settings.embedding_dim,
-            settings.embedding_batch_size,
-        )
-    else:
-        log.warning("VOYAGE_API_KEY is not set: indexing endpoints will answer 503")
+    embedder = build_embedder(settings)
+    llm = build_llm(settings)
+    if embedder is None:
+        log.warning("%s is not set: indexing and Q&A answer 503", missing_embedder_key(settings))
+    if llm is None:
+        log.warning("No LLM key (GEMINI_API_KEY / LLM_API_KEY): overviews, summaries and Q&A answer 503")
 
-    app.state.services = Services(pool=pool, spring=spring, embedder=embedder)
+    app.state.services = Services(pool=pool, spring=spring, embedder=embedder, llm=llm, settings=settings)
     try:
         yield
     finally:
         await spring.aclose()
         if embedder is not None:
             await embedder.aclose()
+        if llm is not None:
+            await llm.aclose()
         await pool.close()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="SHV Assistant", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="SHV Assistant", version="0.2.0", lifespan=lifespan)
     app.include_router(health.router)
     app.include_router(index.router)
+    app.include_router(products.router)
     return app
 
 

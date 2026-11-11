@@ -2,7 +2,7 @@
 
 python -m app.indexing.backfill                    # full reindex + prune deleted products
 python -m app.indexing.backfill --product-id 12    # one or more products
-python -m app.indexing.backfill --dry-run          # print chunks; no database or Voyage key needed
+python -m app.indexing.backfill --dry-run          # print chunks; no database or API key needed
 """
 
 import argparse
@@ -10,12 +10,12 @@ import asyncio
 import logging
 import sys
 
-from app.clients.embeddings import VoyageEmbedder
 from app.clients.spring import SpringClient
 from app.config import get_settings
 from app.db import create_pool
 from app.indexing.chunkers import build_product_chunks
 from app.indexing.indexer import Indexer, reindex_all, reindex_product
+from app.providers import build_embedder, missing_embedder_key
 
 
 async def dry_run(spring: SpringClient, product_ids: list[int], show: int) -> None:
@@ -64,16 +64,12 @@ async def main(argv: list[str] | None = None) -> int:
             await dry_run(spring, args.product_id, args.show)
             return 0
 
-        if settings.voyage_api_key is None:
-            print("VOYAGE_API_KEY is not set (use --dry-run to test without it)", file=sys.stderr)
+        embedder = build_embedder(settings)
+        if embedder is None:
+            key = missing_embedder_key(settings)
+            print(f"{key} is not set (use --dry-run to test without it)", file=sys.stderr)
             return 2
 
-        embedder = VoyageEmbedder(
-            settings.voyage_api_key.get_secret_value(),
-            settings.embedding_model,
-            settings.embedding_dim,
-            settings.embedding_batch_size,
-        )
         pool = await create_pool(settings)
         try:
             indexer = Indexer(pool, embedder)
@@ -85,7 +81,7 @@ async def main(argv: list[str] | None = None) -> int:
                 summary = await reindex_all(spring, indexer, args.page_size)
                 failed = summary.failed
                 print(summary)
-            print(f"Voyage tokens used: {embedder.total_tokens}")
+            print(f"Embedding model: {settings.embedding_provider}/{embedder.model}")
         finally:
             await pool.close()
             await embedder.aclose()

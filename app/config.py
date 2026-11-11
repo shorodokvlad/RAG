@@ -28,10 +28,32 @@ class Settings(DatabaseSettings):
     # Render free instances can take about a minute to wake up.
     spring_timeout_seconds: float = 90.0
 
-    voyage_api_key: SecretStr | None = None
-    embedding_model: str = "voyage-3.5"
+    # Google AI Studio key (free tier): https://aistudio.google.com/apikey
+    # Used for embeddings and, unless LLM_API_KEY is set, for the LLM too.
+    gemini_api_key: SecretStr | None = None
+
+    # LLM: any OpenAI-compatible chat API. Defaults to Gemini's free tier.
+    llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    llm_model: str = "gemini-3.5-flash-lite"
+    llm_api_key: SecretStr | None = None
+    # Language of generated overviews, summaries and answers (the storefront is in English).
+    content_language: str = "English"
+    # Review summaries need at least this many reviews.
+    review_summary_min_reviews: int = 3
+    # Don't regenerate a review summary more often than this (bursts of new reviews).
+    review_summary_min_interval_minutes: int = 10
+
+    # Embeddings: "gemini" (free) or "voyage". Switching re-embeds everything on the next
+    # reconcile, because the stored hash includes the model name.
+    embedding_provider: str = "gemini"
+    embedding_model: str = "gemini-embedding-001"
     embedding_dim: int = 1024
-    embedding_batch_size: int = 64
+    embedding_batch_size: int = 50
+    voyage_api_key: SecretStr | None = None
+
+    @property
+    def effective_llm_api_key(self) -> SecretStr | None:
+        return self.llm_api_key or self.gemini_api_key
 
 
 @lru_cache

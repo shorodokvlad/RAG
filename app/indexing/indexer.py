@@ -1,5 +1,6 @@
 """Write chunks to ai.chunks, embedding only what changed."""
 
+import hashlib
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -31,14 +32,26 @@ class ChangePlan:
     to_delete: list[int] = field(default_factory=list)  # ai.chunks ids that no longer exist
 
 
-def plan_changes(existing: Iterable[ExistingChunk], chunks: Sequence[Chunk]) -> ChangePlan:
+def stored_hash(chunk: Chunk, embedding_key: str) -> str:
+    """Hash kept in ai.chunks: the text plus the embedding model, so switching models
+    (e.g. Voyage → Gemini) re-embeds everything instead of mixing vector spaces."""
+    return hashlib.sha256(f"{embedding_key}\n{chunk.content_hash}".encode()).hexdigest()
+
+
+def embedding_key(embedder: Embedder) -> str:
+    return f"{embedder.model}:{embedder.dimension}"
+
+
+def plan_changes(
+    existing: Iterable[ExistingChunk], chunks: Sequence[Chunk], embedding_key: str
+) -> ChangePlan:
     by_key = {row.key: row for row in existing}
     plan = ChangePlan()
     wanted = set()
     for chunk in chunks:
         wanted.add(chunk.key)
         row = by_key.get(chunk.key)
-        if row is not None and row.content_hash == chunk.content_hash:
+        if row is not None and row.content_hash == stored_hash(chunk, embedding_key):
             plan.to_touch.append(chunk)
         else:
             plan.to_embed.append(chunk)
@@ -97,7 +110,8 @@ class Indexer:
             ExistingChunk(r["id"], (r["source_type"], r["source_id"], r["chunk_index"]), r["content_hash"])
             for r in rows
         ]
-        plan = plan_changes(existing, chunks)
+        key = embedding_key(self._embedder)
+        plan = plan_changes(existing, chunks, key)
 
         # Call the embedding API before taking a connection: never hold one during network I/O.
         vectors = (
@@ -118,7 +132,7 @@ class Indexer:
                             c.category_id,
                             c.chunk_index,
                             c.content,
-                            c.content_hash,
+                            stored_hash(c, key),
                             c.metadata_json,
                             to_pgvector(v),
                         )
@@ -148,18 +162,31 @@ class Indexer:
         )
 
     async def delete_product(self, product_id: int) -> int:
-        async with self._pool.acquire() as conn:
-            result = await conn.execute("DELETE FROM ai.chunks WHERE product_id = $1", product_id)
-        return int(result.split()[-1])
+        return await delete_product_data(self._pool, product_id)
 
     async def prune_products(self, keep_ids: set[int]) -> int:
-        """Delete chunks of products that no longer exist in Spring."""
-        async with self._pool.acquire() as conn:
+        """Delete everything we hold about products that no longer exist in Spring."""
+        keep = list(keep_ids)
+        async with self._pool.acquire() as conn, conn.transaction():
             result = await conn.execute(
                 "DELETE FROM ai.chunks WHERE product_id IS NOT NULL AND NOT (product_id = ANY($1::bigint[]))",
-                list(keep_ids),
+                keep,
             )
+            for table in _GENERATED_TABLES:
+                await conn.execute(f"DELETE FROM {table} WHERE NOT (product_id = ANY($1::bigint[]))", keep)
         return int(result.split()[-1])
+
+
+_GENERATED_TABLES = ("ai.product_overviews", "ai.review_summaries")
+
+
+async def delete_product_data(pool: asyncpg.Pool, product_id: int) -> int:
+    """Remove a product's chunks and generated content; returns the number of chunks deleted."""
+    async with pool.acquire() as conn, conn.transaction():
+        result = await conn.execute("DELETE FROM ai.chunks WHERE product_id = $1", product_id)
+        for table in _GENERATED_TABLES:
+            await conn.execute(f"DELETE FROM {table} WHERE product_id = $1", product_id)
+    return int(result.split()[-1])
 
 
 async def reindex_product(spring: SpringClient, indexer: Indexer, product_id: int) -> IndexStats | int:

@@ -12,6 +12,8 @@ dependencies = [
     "httpx>=0.28",
     "asyncpg>=0.30",
     "tenacity>=9.0",
+    # LLM over any OpenAI-compatible API (Gemini by default). 3.x runs on httpx2.
+    "openai>=3.49,<4",
     # migrations only (sync driver)
     "alembic>=1.14",
     "sqlalchemy>=2.0",
@@ -41,6 +43,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM"]
