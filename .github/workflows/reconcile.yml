@@ -1,10 +1,13 @@
-# Nightly full re-index (PLAN.md §1.5). Free, and it also wakes the Render service.
+# Full re-index (PLAN.md §1.5), run by hand from the Actions tab ("Run workflow").
+# Spring already pushes every product/review change and the knowledge base syncs at startup,
+# so this only catches changes missed while the AI service was down.
 # Repo secrets needed: AI_SERVICE_URL (e.g. https://shv-ai.onrender.com) and AI_SERVICE_TOKEN.
-name: Nightly reconcile
+# To run it nightly again, add under `on:`
+#   schedule:
+#     - cron: "15 2 * * *" # 02:15 UTC
+name: Reconcile
 
 on:
-  schedule:
-    - cron: "15 2 * * *" # 02:15 UTC
   workflow_dispatch:
 
 jobs:

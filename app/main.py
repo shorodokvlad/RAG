@@ -52,7 +52,7 @@ async def _startup_kb_sync(services: Services) -> None:
     try:
         await sync_kb(services.indexer)
     except Exception:
-        log.exception("knowledge base sync at startup failed; the nightly reconcile retries it")
+        log.exception("knowledge base sync at startup failed; it's retried at the next start or reconcile")
 
 
 def create_app() -> FastAPI:

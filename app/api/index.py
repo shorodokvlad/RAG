@@ -47,7 +47,7 @@ async def _reindex_product_task(services: Services, product_id: int) -> None:
             log.info("indexed product %s: %s", product_id, await indexer.index_product(product, reviews))
         await refresh_generated(services, product, reviews)
     except Exception:
-        # The nightly reconcile catches anything that fails here.
+        # A reconcile (POST /index/reconcile) catches anything that fails here.
         log.exception("background re-index of product %s failed", product_id)
 
 
@@ -91,7 +91,7 @@ async def delete_product(product_id: int, services: ServicesDep) -> dict:
 
 @router.post("/reconcile", status_code=status.HTTP_202_ACCEPTED)
 async def reconcile(services: ServicesDep, background: BackgroundTasks) -> dict:
-    """Full re-index + prune; triggered nightly by a GitHub Actions schedule.
+    """Full re-index + prune; triggered by hand from the "Reconcile" GitHub Action.
     Doesn't generate AI content: that happens on change or on first view."""
     require_indexer(services)
     if services.reconcile_running:

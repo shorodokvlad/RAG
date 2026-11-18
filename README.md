@@ -68,7 +68,7 @@ uvicorn app.main:app --reload --port 8000
 | `GET /health/ready` | token | Database check + chunk counts |
 | `POST /index/products/{id}` | token | Re-index one product in the background (deletes its chunks if it no longer exists) |
 | `DELETE /index/products/{id}` | token | Drop a product's chunks |
-| `POST /index/reconcile` | token | Full re-index + prune (nightly GitHub Action) |
+| `POST /index/reconcile` | token | Full re-index + prune ("Reconcile" GitHub Action, run by hand) |
 | `GET /products/{id}/overview` | token | AI overview (generated once, regenerated when the product text changes) |
 | `GET /products/{id}/review-summary` | token | AI review summary (needs 3+ reviews; at most one regeneration per 10 minutes) |
 | `POST /products/{id}/ask` | token | `{"question": "..."}` → answer with citations |
@@ -103,7 +103,7 @@ pytest -q && ruff check . && ruff format --check .
    - `GEMINI_API_KEY`
 3. On the Spring service, set `AI_SERVICE_URL` to `https://shv-ai.onrender.com` (your URL) and
    `AI_SERVICE_TOKEN` to the same value as `SERVICE_TOKEN`.
-4. In this GitHub repo, add the secrets `AI_SERVICE_URL` and `AI_SERVICE_TOKEN` to enable the nightly reconcile.
+4. Optional: to run the "Reconcile" GitHub Action by hand (Actions → Reconcile → Run workflow), add the repo secrets `AI_SERVICE_URL` and `AI_SERVICE_TOKEN`.
 5. Run the first backfill once, either from your machine (step "Index the catalog" with the
    production `.env`) or with `curl -X POST -H "X-Service-Token: …" https://shv-ai.onrender.com/index/reconcile`.
 
